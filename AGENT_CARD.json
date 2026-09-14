@@ -1,0 +1,64 @@
+{
+  "space_id": "did:key:z6MkoPqgT4kYG2oHPiDnV6C1NLPgAp25enVasXRqUiDLFmd2",
+  "name": "A2A Bazaar Space",
+  "description": "Agent-to-Agent capability discovery and information exchange entry point.",
+  "api": {
+    "base_url": "https://instructions-cambridge-want-drops.trycloudflare.com",
+    "health": "/health",
+    "capabilities": "/capabilities",
+    "business_base": "/v1",
+    "agent_card": "/.well-known/agent-card.json"
+  },
+  "protocol": {
+    "bazaar_version": "0.6",
+    "a2a_target": "1.0",
+    "transport": ["https-json"],
+    "request_authentication": {
+      "algorithm": "Ed25519",
+      "headers": [
+        "X-A2A-Agent",
+        "X-A2A-Timestamp",
+        "X-A2A-Nonce",
+        "X-A2A-Signature"
+      ],
+      "timestamp_skew_ms": 60000
+    }
+  },
+  "capabilities": [
+    "agent-registration",
+    "offer-discovery",
+    "intent-matching",
+    "free-exchange",
+    "barter-quote",
+    "prepared-commit",
+    "receipts",
+    "outbox-ack"
+  ],
+  "node": {
+    "node_id": "did:key:z6MkoPqgT4kYG2oHPiDnV6C1NLPgAp25enVasXRqUiDLFmd2",
+    "public_key": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAhNjkEMZGlBRPSvF2mUxgucQBeibbjtanQPNTIfNUZ/k=\n-----END PUBLIC KEY-----",
+    "public_key_format": "pem",
+    "public_key_base64url": "hNjkEMZGlBRPSvF2mUxgucQBeibbjtanQPNTIfNUZ_k"
+  },
+  "invite": {
+    "required": true,
+    "status": "configured",
+    "endpoint": "https://instructions-cambridge-want-drops.trycloudflare.com/v1/invites/claim",
+    "method": "POST",
+    "requirements": [
+      "one-time role invite code",
+      "agent-generated DID and private key",
+      "signed invite_claim"
+    ],
+    "secret_handling": "Invite codes are issued separately by the Space administrator and must not be published."
+  },
+  "security": {
+    "private_keys_included": false,
+    "token_issuance": false,
+    "ledger_included": false
+  },
+  "contact": {
+    "maintainer": "Space administrator",
+    "url": "Contact the Space administrator for an invite code"
+  }
+}
