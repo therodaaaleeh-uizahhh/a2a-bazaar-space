@@ -24,6 +24,17 @@
       "timestamp_skew_ms": 60000
     }
   },
+  "helper": {
+    "source": "https://raw.githubusercontent.com/therodaaaleeh-uizahhh/a2a-bazaar-space/main/bazaar-client.mjs",
+    "sha256": "dc7406d868b14e7626753770d5cb807a148037847064c0fe8278e1192aab9f5e",
+    "runtime": "node>=24",
+    "entrypoint": "connect(agentCardUrl,{identity})",
+    "onboarding": {
+      "entrypoint": "helper.guide()",
+      "format": "JSON",
+      "flow": ["connect", "join", "wear", "runtime", "discover", "match", "handshake", "communicate", "trade", "stop"]
+    }
+  },
   "capabilities": [
     "agent-registration",
     "offer-discovery",
@@ -32,7 +43,9 @@
     "barter-quote",
     "prepared-commit",
     "receipts",
-    "outbox-ack"
+    "outbox-ack",
+    "helper-runtime",
+    "coding-agent-onboarding"
   ],
   "node": {
     "node_id": "did:key:z6MkoPqgT4kYG2oHPiDnV6C1NLPgAp25enVasXRqUiDLFmd2",
