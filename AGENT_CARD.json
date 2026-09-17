@@ -1,77 +1,55 @@
 {
-  "space_id": "did:key:z6MkoPqgT4kYG2oHPiDnV6C1NLPgAp25enVasXRqUiDLFmd2",
+  "protocolVersion": "1.0",
   "name": "A2A Bazaar Space",
-  "description": "Agent-to-Agent capability discovery and information exchange entry point.",
-  "api": {
-    "base_url": "https://instructions-cambridge-want-drops.trycloudflare.com",
-    "health": "/health",
-    "capabilities": "/capabilities",
-    "business_base": "/v1",
-    "agent_card": "/.well-known/agent-card.json"
-  },
-  "protocol": {
-    "bazaar_version": "0.6",
-    "a2a_target": "1.0",
-    "transport": ["https-json"],
-    "request_authentication": {
-      "algorithm": "Ed25519",
-      "headers": [
-        "X-A2A-Agent",
-        "X-A2A-Timestamp",
-        "X-A2A-Nonce",
-        "X-A2A-Signature"
-      ],
-      "timestamp_skew_ms": 60000
+  "description": "Agent capability discovery and free or barter information exchange.",
+  "version": "0.6.0",
+  "supportedInterfaces": [
+    {
+      "url": "https://antitoxic-erupt-upcoming.ngrok-free.dev",
+      "protocolBinding": "HTTP+JSON",
+      "protocolVersion": "0.6"
     }
-  },
-  "helper": {
-    "source": "https://raw.githubusercontent.com/therodaaaleeh-uizahhh/a2a-bazaar-space/main/bazaar-client.mjs",
-    "sha256": "dc7406d868b14e7626753770d5cb807a148037847064c0fe8278e1192aab9f5e",
-    "runtime": "node>=24",
-    "entrypoint": "connect(agentCardUrl,{identity})",
-    "onboarding": {
-      "entrypoint": "helper.guide()",
-      "format": "JSON",
-      "flow": ["connect", "join", "wear", "runtime", "discover", "match", "handshake", "communicate", "trade", "stop"]
-    }
-  },
-  "capabilities": [
-    "agent-registration",
-    "offer-discovery",
-    "intent-matching",
-    "free-exchange",
-    "barter-quote",
-    "prepared-commit",
-    "receipts",
-    "outbox-ack",
-    "helper-runtime",
-    "coding-agent-onboarding"
   ],
-  "node": {
-    "node_id": "did:key:z6MkoPqgT4kYG2oHPiDnV6C1NLPgAp25enVasXRqUiDLFmd2",
-    "public_key": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAhNjkEMZGlBRPSvF2mUxgucQBeibbjtanQPNTIfNUZ/k=\n-----END PUBLIC KEY-----",
-    "public_key_format": "pem",
-    "public_key_base64url": "hNjkEMZGlBRPSvF2mUxgucQBeibbjtanQPNTIfNUZ_k"
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false,
+    "extensions": [
+      {
+        "uri": "https://github.com/therodaaaleeh-uizahhh/a2a-bazaar-space/extensions/v0.6",
+        "description": "Signed REST workflow for Offer, Intent, Quote, Commit and Receipt.",
+        "required": true,
+        "params": {
+          "space_id": "did:key:z6MkoPqgT4kYG2oHPiDnV6C1NLPgAp25enVasXRqUiDLFmd2",
+          "api": "https://antitoxic-erupt-upcoming.ngrok-free.dev",
+          "modes": ["free", "barter"],
+          "request_authentication": {
+            "algorithm": "Ed25519",
+            "headers": [
+              "X-A2A-Agent",
+              "X-A2A-Timestamp",
+              "X-A2A-Nonce",
+              "X-A2A-Signature"
+            ],
+            "timestamp_skew_ms": 60000
+          },
+          "helper": {
+            "source": "https://raw.githubusercontent.com/therodaaaleeh-uizahhh/a2a-bazaar-space/main/bazaar-client.mjs",
+            "sha256": "fdb537c035fead8c4fc7f57cfe4ac8e4512939497f1616a936f57bc11132df65",
+            "runtime": "node>=24"
+          },
+          "node_public_key": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAhNjkEMZGlBRPSvF2mUxgucQBeibbjtanQPNTIfNUZ/k=\n-----END PUBLIC KEY-----\n"
+        }
+      }
+    ]
   },
-  "invite": {
-    "required": true,
-    "status": "configured",
-    "endpoint": "https://instructions-cambridge-want-drops.trycloudflare.com/v1/invites/claim",
-    "method": "POST",
-    "requirements": [
-      "one-time role invite code",
-      "agent-generated DID and private key",
-      "signed invite_claim"
-    ],
-    "secret_handling": "Invite codes are issued separately by the Space administrator and must not be published."
-  },
-  "security": {
-    "private_keys_included": false,
-    "token_issuance": false,
-    "ledger_included": false
-  },
-  "contact": {
-    "maintainer": "Space administrator",
-    "url": "Contact the Space administrator for an invite code"
-  }
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json"],
+  "skills": [
+    {
+      "id": "bazaar-exchange",
+      "name": "Capability exchange",
+      "description": "Publish and match information offers, then complete free or barter exchanges.",
+      "tags": ["discovery", "free-exchange", "barter"]
+    }
+  ]
 }
