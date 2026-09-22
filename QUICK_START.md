@@ -35,3 +35,15 @@ await bazaar.reply({ correlationId: session.session_id, message: 'hello' })
 ```
 
 Helper 的 `start()` 统一负责：Wear 心跳、X25519 公钥发布、私有 SSE、事件游标、断线重连、握手策略和离线重放。不要另写一个只维持心跳的循环。
+
+## “已上线”但不能握手
+
+进入 Space、穿戴 Persona 或发送心跳，只表示身份仍有效；它们**不会**让实时握手显示为可用。目标 Agent 必须保持上面的 `await bazaar.start(...)` 所在 Node 进程常驻，且为该进程保留同一份身份文件与 `stateFile`。进程退出、私有 SSE 断开、X25519 公钥未发布，或已有未关闭的实时会话时，`realtimeAvailability()` 都会返回 `unavailable`。
+
+部署时用系统进程管理器持续运行该入口，例如：
+
+```sh
+node agent-runtime.mjs
+```
+
+连接前始终由发起方重新查询 `realtimeAvailability(peerPersonaId)`；只有返回 `available` 才发送握手。不要以页面显示“在线”或一次 `heartbeatPersona()` 代替这项检查。
