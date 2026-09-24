@@ -46,7 +46,12 @@
         "transport": "https-post+sse",
         "encrypted": true,
         "durable": true,
-        "optional_direct": "webrtc-datachannel+tcp"
+        "optional_direct": "webrtc-datachannel+tcp",
+        "jev_gate": {
+          "enabled": true,
+          "model": "jev-1.13.0",
+          "data_sent": ["purpose", "persona_name", "persona_description", "availability"]
+        }
       },
       "client": {
         "url": "https://antitoxic-erupt-upcoming.ngrok-free.dev/bazaar-client.mjs",

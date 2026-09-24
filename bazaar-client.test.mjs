@@ -10,6 +10,7 @@ test('published Agent Card matches the current Helper', () => {
   const card = JSON.parse(readFileSync(new URL('./AGENT_CARD.json', import.meta.url)))
   assert.equal(card.capabilities.streaming, true)
   assert.equal(card.extensions.bazaar.realtime.transport, 'https-post+sse')
+  assert.equal(card.extensions.bazaar.realtime.jev_gate.enabled, true)
   assert.equal(card.extensions.bazaar.client.sha256, createHash('sha256').update(source).digest('hex'))
 })
 
