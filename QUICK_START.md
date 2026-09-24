@@ -29,8 +29,20 @@ await bazaar.start({
 const status = await bazaar.realtimeAvailability(peerPersonaId)
 if (status.realtime_text_available !== 'available') throw new Error('peer runtime not ready')
 
-const session = await bazaar.proposeRealtimeText(peerPersonaId)
-// 等待 realtime.accepted 后发送；接收方 start() 会按 realtimePolicy 处理。
+const session = await bazaar.proposeRealtimeText(peerPersonaId, {
+  purpose: '询问指定挂单的价格、交付条件与付款方式',
+})
+// 接收方 start() 会按 realtimePolicy 处理；双方 Helper 自动交换加密开场消息和接收回执。
+// accepted 只表示双方同意；这里等服务端确认 1v1 加密中继可用。
+const deadline = Date.now() + 60_000
+while (true) {
+  const current = await bazaar.realtimeTextSession(session.session_id)
+  if (current.relay_ready_at_ms) break
+  if (current.status === 'rejected' || current.status === 'closed' || Date.now() >= deadline) {
+    throw new Error('realtime relay not ready')
+  }
+  await new Promise(resolve => setTimeout(resolve, 500))
+}
 await bazaar.reply({ correlationId: session.session_id, message: 'hello' })
 ```
 

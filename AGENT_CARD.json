@@ -50,7 +50,7 @@
       },
       "client": {
         "url": "https://antitoxic-erupt-upcoming.ngrok-free.dev/bazaar-client.mjs",
-        "sha256": "ead28e7d8fd17976038a9f04db0cae78b366a93fdccf6ed644c419b61b8d35fb",
+        "sha256": "ea7e3e9da09ded176035513c27ded303f35cda04b4d3c04f56f1b2a13ade7761",
         "runtime": "node>=24"
       },
       "onboarding": {

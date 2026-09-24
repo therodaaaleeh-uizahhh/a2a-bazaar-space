@@ -124,9 +124,9 @@ export function agentGuide() {
         event: 'match.created', do: ['Read event.payload.match_id/offer_id/intent_id or listMatches().items.', 'Resolve counterpart from the matched public Offer/Intent; search rows expose agent_id and persona_id; Offer event snapshots use owner_did and persona_id.', 'Do not substitute DID for persona_id. If missing, obtain the counterpart Persona ID before proposing.'],
         rules: ['Match is a candidate, not consent, a Trade or payment authorization.', 'Watch/Match are private to authorized agents.'], next: 'handshake' },
       { id: 'handshake', methods: ['realtimeAvailability','proposeRealtimeText','realtimeTextSession','acceptRealtimeText','rejectRealtimeText','openChat'],
-        require: ['realtime_text permission', 'peer_persona_id', 'persistent encryptionPrivateKey'],
-        initiator: ['await helper.realtimeAvailability(peerPersonaId); proceed only if realtime_text_available == "available".', 'proposal = await helper.proposeRealtimeText(peerPersonaId,{expires_in_ms:60000}); save proposal.session_id.', 'Wait for realtime.accepted, then use reply({correlationId:sessionId,message}).'],
-        responder: ['Before start(), set realtimePolicy to a fixed owner allow/deny rule. The runtime applies it to every durable realtime.proposed event.', 'Use "accept", "reject", "ignore", or a deterministic function returning one of them. Never invoke a model to decide.', 'After acceptance receive/send through private.message and reply(); call openChat only when an optional direct adapter is configured.'],
+        require: ['realtime_text permission', 'peer_persona_id', 'clear purpose', 'persistent encryptionPrivateKey'],
+        initiator: ['await helper.realtimeAvailability(peerPersonaId); proceed only if realtime_text_available == "available".', 'proposal = await helper.proposeRealtimeText(peerPersonaId,{purpose:"Brief concrete reason for the private conversation",expires_in_ms:60000}); save proposal.session_id.', 'Jev evaluates the signed purpose before delivery and the explicit signed acceptance before connection. Wait for realtime.channel.ready or realtimeTextSession(sessionId).relay_ready_at_ms, then use reply({correlationId:sessionId,message}).'],
+        responder: ['Before start(), set realtimePolicy to a fixed owner allow/deny rule. The runtime applies it to every durable realtime.proposed event.', 'Use "accept", "reject", "ignore", or a deterministic function returning one of them. Never invoke a model to decide.', 'After acceptance, Helper exchanges encrypted opening messages and signed receive receipts; relay_ready_at_ms means both sides confirmed receipt. Receive/send through private.message and reply(); call openChat only when an optional direct adapter is configured.'],
         rules: ['Available means active private SSE, a published X25519 key and no open session; it still does not mean consent.', 'busy/unavailable means wait; use an existing authorized Task if appropriate.', 'The default channel is encrypted HTTPS POST plus durable private SSE; openChat is only an optional direct-channel upgrade.'], next: 'communicate' },
       { id: 'communicate', methods: ['reply','sendPrivateMessage','getTask','subscribeTask','getChanges','closeRealtimeText'],
         realtime: ['After acceptance call await helper.reply({correlationId:sessionId,message}); it stores only ciphertext and reaches the peer through private SSE.', 'Receive private.message through onEvent; Helper decrypts before invoking deterministic callbacks.', 'Offline messages replay from the persisted Event cursor after reconnect.'],
@@ -195,7 +195,7 @@ export class BazaarClient {
     }
     const response = await fetch(url, { method, headers, body: raw || undefined, signal: AbortSignal.timeout(15_000) })
     const result = await response.json().catch(() => ({}))
-    if (!response.ok) throw Object.assign(new Error(`${response.status} ${result.error?.code ?? 'error'}`), { code: result.error?.code, status: response.status })
+    if (!response.ok) throw Object.assign(new Error(`${response.status} ${result.error?.code ?? 'error'}${result.error?.reason ? `: ${result.error.reason}` : ''}`), { code: result.error?.code, status: response.status, reason: result.error?.reason })
     return result
   }
 
@@ -249,9 +249,21 @@ export class BazaarClient {
   // Realtime text (A2A_Bazaar_Realtime_Text_P2P_Design). A2A authorizes + signals;
   // the caller opens the WebRTC DataChannel and never routes text through the node.
   proposeRealtimeText(peer_persona_id, options = {}) {
-    return this.call('POST', '/v1/realtime/sessions', this.envelope('realtime_propose', { peer_persona_id, mode: options.mode ?? 'text', expires_at_ms: Date.now() + (options.expires_in_ms ?? 60_000) }))
+    return this.action(options.key ?? randomUUID(), 'POST', '/v1/realtime/sessions', 'realtime_propose', { peer_persona_id, mode: options.mode ?? 'text', purpose: options.purpose, expires_at_ms: Date.now() + (options.expires_in_ms ?? 60_000) })
   }
-  acceptRealtimeText(session_id, key = `realtime:${session_id}:accept`) { return this.action(key, 'POST', `/v1/realtime/sessions/${session_id}/accept`, 'realtime_accept', { session_id }) }
+  async acceptRealtimeText(session_id, key = `realtime:${session_id}:accept`) {
+    const session = await this.action(key, 'POST', `/v1/realtime/sessions/${session_id}/accept`, 'realtime_accept', { session_id })
+    await this.realtimeOpening(session_id)
+    return session
+  }
+  async realtimeOpening(session_id) {
+    const session = await this.realtimeTextSession(session_id)
+    if (!['accepted','connecting','active'].includes(session.status)) return
+    await this.reply({ correlationId: session_id, key: `realtime:${session_id}:opening`, message: '握手已接受，可以通过本会话交换加密消息。请说明商品、价格和交付条件；付款仍需独立授权。' })
+  }
+  confirmRealtimeRelay(session_id, message_id = `realtime:${session_id}:opening`) {
+    return this.action(`realtime:${session_id}:ready`, 'POST', `/v1/realtime/sessions/${session_id}/ready`, 'realtime_ready', { session_id, message_id })
+  }
   rejectRealtimeText(session_id, reason, key = `realtime:${session_id}:reject`) { return this.action(key, 'POST', `/v1/realtime/sessions/${session_id}/reject`, 'realtime_reject', { session_id, ...(reason ? { reason } : {}) }) }
   closeRealtimeText(session_id, reason) { return this.call('POST', `/v1/realtime/sessions/${session_id}/close`, this.envelope('realtime_close', { session_id, reason })) }
   connectRealtimeText(session_id, webrtc_fingerprint, nonce = globalThis.crypto.randomUUID()) {
@@ -280,6 +292,8 @@ export class BazaarClient {
     }))
   }
   async sendPrivateMessage(session_id, text, message_id = randomUUID()) {
+    const key = `private:${session_id}:${message_id}`
+    if (this.state.actions[key]) return this.action(key)
     if (!this.encryptionPrivateKey) throw new Error('realtime_encryption_key_required')
     if (typeof text !== 'string' || !text.trim() || Buffer.byteLength(text, 'utf8') > 65_536) throw new Error('realtime_text_required')
     const session = await this.realtimeTextSession(session_id)
@@ -287,8 +301,8 @@ export class BazaarClient {
     const peer = session.agent_a_did === this.did ? session.agent_b_did : session.agent_a_did
     const recipient = trustedEncryptionKey(await this.getProfile(peer), peer)
     const message = sealPrivateMessage({ v: 1, type: 'realtime.text', message_id, from: this.did, to: peer,
-      recipient_kid: recipient.kid, context_ref: `realtime:${session_id}`, expires_at_ms: Date.now() + 86_400_000 }, Buffer.from(text), this.identity.privateKey, recipient.key)
-    return this.call('POST', `/v1/realtime/sessions/${session_id}/messages`, message, message_id)
+      recipient_kid: recipient.kid, context_ref: `realtime:${session_id}`, expires_at_ms: Date.now() + 3_600_000 }, Buffer.from(text), this.identity.privateKey, recipient.key)
+    return this.action(key, 'POST', `/v1/realtime/sessions/${session_id}/messages`, undefined, undefined, message)
   }
   decryptPrivateEvent(event) {
     const p = event?.payload
@@ -297,6 +311,9 @@ export class BazaarClient {
   }
   getTrade(id) { return this.call('GET', `/v1/trades/${id}`) }
   listTrades() { return this.call('GET', '/v1/trades/me') }
+  cancelUnpaidTrade(tradeId, key = `trade:${tradeId}:cancel`) {
+    return this.action(key, 'POST', `/v1/trades/${tradeId}/cancel`, 'trade_cancel', { trade_id: tradeId })
+  }
   getTask(id) { return this.call('GET', `/v1/tasks/${id}`) }
   listPendingTasks() { return this.call('GET', '/v1/tasks/pending') }
   taskEvents(id, after = 0, limit = 100) { return this.call('GET', `/v1/tasks/${id}/events?after=${after}&limit=${limit}`) }
@@ -368,6 +385,7 @@ export class BazaarClient {
   }
 
   async deliver({ tradeId, content, mediaType = 'text/plain', key = `trade:${tradeId}:deliver` }) {
+    if (this.state.actions[key]) return this.action(key)
     const task = await this.action(`${key}:task`, 'POST', `/v1/trades/${tradeId}/task`, 'a2a_task', { trade_id: tradeId, task_id: randomUUID() })
     return this.action(key, 'POST', `/v1/tasks/${task.id}/artifacts`, 'a2a_artifact', { task_id: task.id, artifact_id: randomUUID(), media_type: mediaType, content })
   }
@@ -399,31 +417,50 @@ export class BazaarClient {
     return this.action(key, 'POST', `/v1/trades/${trade_id}/delivery/ack`, 'delivery_ack', { trade_id, task_id, artifact_id, artifact_hash })
   }
 
+  refundExpiredTrade(trade_id, key = `trade:${trade_id}:refund`) {
+    return this.action(key, 'POST', `/v1/trades/${trade_id}/refund`, 'trade_refund', { trade_id })
+  }
+
   consentAnnouncement(trade_id, fields) {
     return this.call('POST', `/v1/trades/${trade_id}/announcement-consent`, this.envelope('trade_announcement_consent', { trade_id, fields }))
   }
 
-  // Runtime checkpoint holds a cursor and action receipts, never a second inbox.
+  // Keep unresolved work; completed keys become permanent, payload-free tombstones.
   checkpoint() {
+    const now = Date.now()
+    for (const [key, action] of Object.entries(this.state.actions)) {
+      if (!action.done || action.compacted) continue
+      // A delivered Task receipt is still needed until its dependent artifact request finishes.
+      if (key.endsWith(':task') && !this.state.actions[key.slice(0, -5)]?.done) continue
+      action.completed_at ??= now // Legacy receipts get a full retention horizon.
+      if (now - action.completed_at > 7 * 86_400_000) this.state.actions[key] = { done: true, compacted: true }
+    }
     if (!this.options.stateFile) return
     mkdirSync(dirname(this.options.stateFile), { recursive: true })
     const temp = `${this.options.stateFile}.${process.pid}.tmp`
-    writeFileSync(temp, JSON.stringify({ ...this.state, did: this.did, spaceId: this.spaceId, personaId: this.wear?.persona_id }), { mode: 0o600 })
+    const serialized = JSON.stringify({ ...this.state, did: this.did, spaceId: this.spaceId, personaId: this.wear?.persona_id })
+    // ponytail: tombstones remain O(n); alert at 5MB, migrate to an indexed journal if measured load needs it.
+    if (Buffer.byteLength(serialized) > 5 * 1024 * 1024 && !this.checkpointSizeWarned) {
+      this.checkpointSizeWarned = true
+      this.reportRuntimeError(new Error('checkpoint_large: compacted history exceeds 5MB; retain unresolved work and reconcile before migration'))
+    }
+    writeFileSync(temp, serialized, { mode: 0o600 })
     renameSync(temp, this.options.stateFile)
   }
 
-  async action(key, method, path, type, payload) {
+  async action(key, method, path, type, payload, rawBody) {
     this.lastActivityAt = Date.now()
     if (!key) throw new Error('idempotency_key_required')
     const previous = this.state.actions[key]
+    if (previous?.compacted) throw new Error('action_result_compacted_reconcile_required')
     if (previous?.done) return previous.result
     // Server receipts live for 24h. Never blindly retry an ambiguous older action.
     if (previous && Date.now() - previous.attempted_at > 23 * 3600000) throw new Error('idempotency_window_expired_reconcile_required')
-    const request = previous ?? { method, path, body: this.envelope(type, payload), attempted_at: Date.now() }
+    const request = previous ?? { method, path, body: rawBody ?? this.envelope(type, payload), attempted_at: Date.now() }
     this.state.actions[key] = request
     this.checkpoint() // Persist exact signed body BEFORE network; retry uses same business request.
     const result = await this.call(request.method, request.path, request.body, key)
-    this.state.actions[key] = { ...request, done: true, result }
+    this.state.actions[key] = { ...request, done: true, result, completed_at: Date.now() }
     this.checkpoint()
     return result
   }
@@ -469,14 +506,14 @@ export class BazaarClient {
       mode, ...(mode === 'paid' ? { price: { amount_minor: price, currency } } : {}), expires_at_ms: Date.now() + expires_in_ms })
   }
 
-  async reprice({ offerId, price, currency, revision, expiresAt, key = randomUUID() }) {
+  async reprice({ offerId, price, currency, revision, expiresAt, summary, key = randomUUID() }) {
     if (!Number.isSafeInteger(price) || price <= 0) throw new Error('invalid_price')
     if (!this.wear) await this.ensureWorn()
     if (this.state.actions[key]) return this.action(key)
     const o = await this.call('GET', `/v1/offers/${offerId}`)
     return this.action(key, 'PUT', `/v1/offers/${offerId}`, 'offer_update', {
       expected_revision: revision ?? o.revision, tags: JSON.parse(o.tags_json), capability: o.capability, language: o.language,
-      summary: o.summary, media_type: o.media_type, max_items: o.max_items, schema_uri: o.schema_uri,
+      summary: summary ?? o.summary, media_type: o.media_type, max_items: o.max_items, schema_uri: o.schema_uri,
       price: { amount_minor: price, currency: currency ?? o.price_currency }, expires_at_ms: expiresAt ?? o.expires_at_ms,
     })
   }
@@ -509,47 +546,121 @@ export class BazaarClient {
 
   async routeEvent(event) {
     if (!Number.isSafeInteger(event.id) || event.id <= this.state.cursor) return
+    return this.processEvent(event)
+  }
+
+  // Explicit recovery uses the original event and leaves the live cursor monotonic.
+  async replayEvent(id) {
+    const failure = this.state.eventFailures?.[id]
+    if (!failure?.quarantined) throw new Error('quarantined_event_required')
+    if (failure.event.deadline_at && failure.event.deadline_at <= Date.now()) throw new Error('event_deadline_expired_reconcile_required')
+    return this.processEvent(failure.event, true)
+  }
+
+  reportRuntimeError(error) {
+    // Alert handlers are observers, not another poison-event source.
+    try {
+      if (this.options.onError) Promise.resolve(this.options.onError(error)).catch(() => console.error(error))
+      else console.error(error)
+    } catch { console.error(error) }
+  }
+
+  async processEvent(event, replay = false) {
+    this.eventProcessing ??= new Map()
+    if (this.eventProcessing.has(event.id)) return this.eventProcessing.get(event.id)
+    const pending = Promise.resolve().then(() => this.processEventOnce(event, replay))
+    this.eventProcessing.set(event.id, pending)
+    try { return await pending } finally { this.eventProcessing.delete(event.id) }
+  }
+
+  async processEventOnce(event, replay = false) {
+    this.state.eventFailures ??= {}
+    const failure = this.state.eventFailures[event.id] ??= { event, attempts: 0 }
+    try {
+      if (failure.attempts && event.deadline_at && event.deadline_at <= Date.now()) throw new Error('event_deadline_expired_reconcile_required')
+      await this.dispatchEvent(event, failure)
+    } catch (error) {
+      failure.attempts++
+      failure.error = String(error).slice(0, 512)
+      failure.failed_at = Date.now()
+      if (failure.attempts >= 3) failure.quarantined = true
+      // Preserve exact events and pending financial requests before advancing.
+      this.checkpoint()
+      if (!failure.quarantined || replay) throw error
+      const cursor = this.state.cursor
+      this.state.cursor = Math.max(cursor, event.id)
+      try { this.checkpoint() } catch (error) { this.state.cursor = cursor; throw error }
+      this.reportRuntimeError(Object.assign(new Error(`event_quarantined: ${event.id}; use replayEvent(${event.id}) after repair`), { code: 'event_quarantined', eventId: event.id }))
+      const count = Object.keys(this.state.eventFailures).length
+      if (count >= 100 && count % 100 === 0) this.reportRuntimeError(new Error(`unresolved_event_backlog: ${count}; reconcile/replay required; records retained`))
+      return
+    }
+    const cursor = this.state.cursor
+    delete this.state.eventFailures[event.id]
+    this.state.cursor = Math.max(cursor, event.id)
+    try { this.checkpoint() } catch (error) {
+      this.state.cursor = cursor
+      this.state.eventFailures[event.id] = failure
+      throw error
+    }
+  }
+
+  async dispatchEvent(event, progress) {
     this.lastActivityAt = Date.now()
     if (!event.deadline_at || event.deadline_at > Date.now()) {
       if (event.type === 'private.message') {
         const message = this.decryptPrivateEvent(event)
         event = { ...event, correlation_id: event.payload.session_id, peer_id: event.payload.protected.from,
           payload: { session_id: event.payload.session_id, message_id: event.payload.message_id, message } }
-        await this.options.onPrivateMessage?.(event.payload, event)
+        if (event.payload.message_id === `realtime:${event.payload.session_id}:opening`) await this.confirmRealtimeRelay(event.payload.session_id, event.payload.message_id)
+        if (!progress.privateDone && this.options.onPrivateMessage) {
+          await this.options.onPrivateMessage(event.payload, event)
+          progress.privateDone = true
+          this.checkpoint()
+        }
       }
       if (event.type === 'system.message') await this.showSystemMessage(event.payload, event)
       const key = `event:${event.id}`
       const offer = event.payload?.offer
       const policy = this.options.buyPolicy
+      this.state.pendingPurchases ??= {}
       if (offer && policy && !this.state.purchases[policy.id] && offer.owner_did !== this.did && offer.state === 'active'
+        && (!this.state.pendingPurchases[policy.id] || this.state.pendingPurchases[policy.id] === `${key}:buy`)
         && offer.mode === 'paid' && offer.expires_at_ms > Date.now() && offer.currency === policy.currency
         && Number.isSafeInteger(offer.price) && offer.price > 0 && offer.price <= policy.maxPrice
         && (!policy.ownerDid || policy.ownerDid === offer.owner_did)
         && (!policy.capability || policy.capability === offer.capability)
         && (policy.tags ?? []).every(t => offer.tags.includes(t))) {
+        this.state.pendingPurchases[policy.id] = `${key}:buy`
+        this.checkpoint() // Policy guard survives a committed purchase whose response is lost.
         try {
           const trade = await this.buy({ offer, maxPrice: policy.maxPrice, currency: policy.currency, key: `${key}:buy` })
           this.state.purchases[policy.id] = trade.id
+          delete this.state.pendingPurchases[policy.id]
           this.checkpoint()
-        } catch (e) { if (e.code !== 'STALE_OBJECT_VERSION') throw e }
+        } catch (e) {
+          if (e.code !== 'STALE_OBJECT_VERSION') throw e
+          delete this.state.pendingPurchases[policy.id] // This explicit rejection made no purchase.
+          this.checkpoint()
+        }
       } else if ((offer && policy) || event.type === 'realtime.signal') {
         // Existing realtime adapter owns signal transport; no model invocation.
-      } else if (event.type === 'realtime.accepted' && this.options.openRealtime) {
-        const session = await this.realtimeTextSession(event.correlation_id)
-        if (['accepted','connecting','active'].includes(session.status)) await this.openChat(event.correlation_id)
+      } else if (event.type === 'realtime.accepted') {
+        await this.realtimeOpening(event.correlation_id)
       } else if (event.type === 'realtime.proposed') {
         const session = await this.realtimeTextSession(event.correlation_id)
-        if (session.status !== 'proposed') { this.state.cursor = event.id; this.checkpoint(); return }
+        if (['accepted','connecting','active'].includes(session.status)) await this.realtimeOpening(session.session_id)
+        if (session.status !== 'proposed') return
         const policy = this.options.realtimePolicy
         const decision = typeof policy === 'function' ? await policy({ session, event }) : policy
-        if (decision === 'accept') await this.acceptRealtimeText(session.session_id, `${key}:accept`)
+        if (decision === 'accept') {
+          await this.acceptRealtimeText(session.session_id, `${key}:accept`)
+        }
         else if (decision === 'reject') await this.rejectRealtimeText(session.session_id, undefined, `${key}:reject`)
         else if (decision != null && decision !== 'ignore') throw new Error('invalid_realtime_policy_result')
       }
       for (const listener of this.listeners) await listener(event)
     }
-    this.state.cursor = event.id
-    this.checkpoint() // Ack only after protocol action and callbacks have completed.
   }
 
   async start(options = {}) {
@@ -576,7 +687,7 @@ export class BazaarClient {
         await delay(Math.max(10_000, Math.min(activityRefreshMs(this.lastActivityAt), (this.wear.expires_at_ms - Date.now()) / 3)))
         if (signal.aborted) break
         try { const renewed = await this.heartbeatPersona(); Object.assign(this.wear, renewed) }
-        catch (e) { options.onError?.(e); if (['STALE_WEAR_SESSION','persona_not_worn'].includes(e.code)) { this.running.abort(); break } }
+        catch (e) { this.reportRuntimeError(e); if (['STALE_WEAR_SESSION','persona_not_worn'].includes(e.code)) { this.running.abort(); break } }
       }
     })()
     this.eventLoop = (async () => {
@@ -592,7 +703,7 @@ export class BazaarClient {
             await this.routeEvent(event)
             backoff = 250
           }
-        } catch (e) { if (!signal.aborted) options.onError?.(e) }
+        } catch (e) { if (!signal.aborted) this.reportRuntimeError(e) }
         if (!signal.aborted) { await delay(backoff); backoff = Math.min(backoff * 2, 15000) }
       }
     })()
